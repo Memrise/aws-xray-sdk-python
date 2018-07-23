@@ -3,6 +3,8 @@ import re
 from aws_xray_sdk.core.models.trace_header import TraceHeader
 from aws_xray_sdk.core.models import http
 
+import wrapt
+
 
 first_cap_re = re.compile('(.)([A-Z][a-z]+)')
 all_cap_re = re.compile('([a-z0-9])([A-Z])')
@@ -21,10 +23,17 @@ def inject_trace_header(headers, entity):
     if not entity:
         return
 
+    if hasattr(entity, 'type') and entity.type == 'subsegment':
+        header = entity.parent_segment.get_origin_trace_header()
+    else:
+        header = entity.get_origin_trace_header()
+    data = header.data if header else None
+
     to_insert = TraceHeader(
         root=entity.trace_id,
         parent=entity.id,
         sampled=entity.sampled,
+        data=data,
     )
 
     value = to_insert.to_header_str()
@@ -42,7 +51,7 @@ def calculate_sampling_decision(trace_header, recorder,
     in the recorder. If not enbaled it returns 1. Otherwise it uses
     sampling rule to decide.
     """
-    if trace_header.sampled is not None:
+    if trace_header.sampled is not None and trace_header.sampled != '?':
         return trace_header.sampled
     elif not recorder.sampling:
         return 1
@@ -82,6 +91,20 @@ def calculate_segment_name(host_name, recorder):
         return recorder.service
 
 
+def prepare_response_header(origin_header, segment):
+    """
+    Prepare a trace header to be inserted into response
+    based on original header and the request segment.
+    """
+    if origin_header and origin_header.sampled == '?':
+        new_header = TraceHeader(root=segment.trace_id,
+                                 sampled=segment.sampled)
+    else:
+        new_header = TraceHeader(root=segment.trace_id)
+
+    return new_header.to_header_str()
+
+
 def to_snake_case(name):
     """
     Convert the input string to snake-cased string.
@@ -89,3 +112,24 @@ def to_snake_case(name):
     s1 = first_cap_re.sub(r'\1_\2', name)
     # handle acronym words
     return all_cap_re.sub(r'\1_\2', s1).lower()
+
+
+# ? is not a valid entity, and we don't want things after the ? for the segment name
+def strip_url(url):
+    """
+    Will generate a valid url string for use as a segment name
+    :param url: url to strip
+    :return: validated url string
+    """
+    return url.partition('?')[0] if url else url
+
+
+def unwrap(obj, attr):
+    """
+    Will unwrap a `wrapt` attribute
+    :param obj: base object
+    :param attr: attribute on `obj` to unwrap
+    """
+    f = getattr(obj, attr, None)
+    if f and isinstance(f, wrapt.ObjectProxy) and hasattr(f, '__wrapped__'):
+        setattr(obj, attr, f.__wrapped__)

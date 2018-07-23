@@ -4,6 +4,7 @@ import requests
 from aws_xray_sdk.core import patch
 from aws_xray_sdk.core import xray_recorder
 from aws_xray_sdk.core.context import Context
+from aws_xray_sdk.ext.util import strip_url
 
 
 patch(('requests',))
@@ -28,10 +29,10 @@ def construct_ctx():
 
 def test_ok():
     status_code = 200
-    url = 'http://{}/status/{}'.format(BASE_URL, status_code)
+    url = 'http://{}/status/{}?foo=bar'.format(BASE_URL, status_code)
     requests.get(url)
     subsegment = xray_recorder.current_segment().subsegments[0]
-    assert subsegment.name == url
+    assert subsegment.name == strip_url(url)
 
     http_meta = subsegment.http
     assert http_meta['request']['url'] == url

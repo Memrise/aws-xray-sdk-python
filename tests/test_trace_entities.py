@@ -1,3 +1,4 @@
+# -*- coding: iso-8859-15 -*-
 import pytest
 
 from aws_xray_sdk.core.models.segment import Segment
@@ -8,6 +9,25 @@ from aws_xray_sdk.core.exceptions.exceptions import SegmentNotFoundException
 from aws_xray_sdk.core.exceptions.exceptions import AlreadyEndedException
 
 from .util import entity_to_dict
+
+
+def test_unicode_entity_name():
+
+    name1 = u'福'
+    name2 = u'セツナ'
+    segment = Segment(name1)
+    subsegment = Subsegment(name2, 'local', segment)
+
+    assert segment.name == name1
+    assert subsegment.name == name2
+
+
+def test_segment_user():
+    segment = Segment('seg')
+    segment.set_user('whoami')
+    doc = entity_to_dict(segment)
+
+    assert doc['user'] == 'whoami'
 
 
 def test_put_http_meta():
@@ -52,7 +72,8 @@ def test_put_annotation():
         'key2': 'value2',
     }
     # invalid annotation key-value pair should be dropped
-    segment.put_annotation('invalid', invalid)
+    segment.put_annotation('valid_key', invalid)
+    segment.put_annotation('invalid-key', 'validvalue')
     segment.put_annotation('number', 1)
 
     subsegment = Subsegment('sub', 'local', segment)
@@ -61,7 +82,8 @@ def test_put_annotation():
 
     doc = entity_to_dict(segment)
     assert doc['annotations']['number'] == 1
-    assert 'invalid' not in doc['annotations']
+    assert 'invalid-value' not in doc['annotations']
+    assert 'invalid-key' not in doc['annotations']
 
     sub_doc = doc['subsegments'][0]
     assert not sub_doc['annotations']['bool']

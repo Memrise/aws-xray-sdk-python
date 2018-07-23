@@ -1,8 +1,10 @@
-import botocore.session
 import pytest
+
+import botocore.session
+from botocore import UNSIGNED
+from botocore.client import Config
 from botocore.exceptions import ClientError
 from pynamodb.attributes import UnicodeAttribute
-from pynamodb.exceptions import VerboseClientError
 from pynamodb.models import Model
 
 from aws_xray_sdk.core import patch
@@ -36,7 +38,7 @@ def test_exception():
 
     try:
         SampleModel.describe_table()
-    except VerboseClientError:
+    except Exception:
         pass
 
     subsegments = xray_recorder.current_segment().subsegments
@@ -52,6 +54,29 @@ def test_exception():
     assert aws_meta['table_name'] == 'mytable'
 
 
+def test_empty_response():
+    from aws_xray_sdk.ext.pynamodb.patch import pynamodb_meta_processor
+    subsegment = xray_recorder.begin_subsegment('test')
+
+    class TempReq(object):
+        def __init__(self):
+            self.headers = {'X-Amz-Target': 'ddb.ListTables'.encode('utf-8')}
+            self.url = 'ddb.us-west-2'
+            self.body = '{}'.encode('utf-8')
+
+    prepared_request = TempReq()
+    args = [prepared_request]
+
+    pynamodb_meta_processor(wrapped=None, instance=None, args=args,
+                            kwargs=None, return_value=None,
+                            exception=None, subsegment=subsegment,
+                            stack=None)
+
+    aws_meta = subsegment.aws
+    assert aws_meta['region'] == 'us-west-2'
+    assert aws_meta['operation'] == 'ListTables'
+
+
 def test_only_dynamodb_calls_are_traced():
     """Test only a single subsegment is created for other AWS services.
 
@@ -62,7 +87,8 @@ def test_only_dynamodb_calls_are_traced():
     PynamoDB call.
     """
     session = botocore.session.get_session()
-    s3 = session.create_client('s3', region_name='us-west-2')
+    s3 = session.create_client('s3', region_name='us-west-2',
+                               config=Config(signature_version=UNSIGNED))
     try:
         s3.get_bucket_location(Bucket='mybucket')
     except ClientError:
